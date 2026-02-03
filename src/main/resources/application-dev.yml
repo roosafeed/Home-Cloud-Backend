@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/home_cloud
+    username: home_cloud
+    password: home_cloud
+    hikari:
+      maximum-pool-size: 5
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB # Maximum file size for a single file
+      max-request-size: 52MB # Maximum size of the entire request
+
+app:
+  media:
+    root-path: K:/home-cloud/media
+    scan-on-startup: true
+    watch-enabled: true
+    ignored-extensions:
+      - tmp
+      - part
+      - ds_store
+    thumbnail:
+      max-size-px: 256
+      directory: .thumbnails
+  security:
+    invite-token-ttl-hours: 48
+    admin:
+      email: admin@home.com
+      password: admin
+    jwt:
+      secret: super-secret-key-83bee8f36da59f12c57b5457622d0322cb45c396e6dc746260401e5993520e1b
+      token-ttl-hours: 24
+      issuer: home-cloud
+  streaming:
+    chunk-size-kb: 1024
+
+logging:
+  level:
+    root: DEBUG
