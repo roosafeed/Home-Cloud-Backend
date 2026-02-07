@@ -2,6 +2,7 @@ package com.roosafeed.home_cloud.media.service;
 
 import com.roosafeed.home_cloud.auth.dto.UserDto;
 import com.roosafeed.home_cloud.auth.entity.User;
+import com.roosafeed.home_cloud.auth.repository.UserRepository;
 import com.roosafeed.home_cloud.common.auth.context.CurrentUserProvider;
 import com.roosafeed.home_cloud.common.enums.ErrorCode;
 import com.roosafeed.home_cloud.common.enums.SharePermission;
@@ -11,6 +12,7 @@ import com.roosafeed.home_cloud.media.dto.request.MediaShareRequest;
 import com.roosafeed.home_cloud.media.entity.MediaFile;
 import com.roosafeed.home_cloud.media.entity.MediaShare;
 import com.roosafeed.home_cloud.media.repository.MediaShareRepository;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -18,17 +20,23 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class MediaShareService {
     private final MediaShareRepository mediaShareRepository;
+    private final UserRepository userRepository;
 
     private final MediaPermissionService mediaPermissionService;
 
     private final CurrentUserProvider currentUserProvider;
+
+    private final EntityManager entityManager;
 
     public List<MediaShareDto> shareMediaWithUserList(UUID mediaId, List<MediaShareRequest> shareRequests) {
         // current user should have full permission
@@ -52,27 +60,60 @@ public class MediaShareService {
             );
         }
 
-        MediaFile media = new MediaFile();
-        media.setId(mediaId);
+        // extract all the user IDs
+        List<UUID> userIds = shareRequests.stream()
+                .map(MediaShareRequest::getSharedWithUserId)
+                .toList();
 
-        List<MediaShare> mediaShares = new ArrayList<>();
-
-        for (var request : shareRequests) {
-            // TODO: verify the user exists
-            User user = new User();
-            user.setId(request.getSharedWithUserId());
-
-            MediaShare mediaShare = new MediaShare();
-            mediaShare.setMedia(media);
-            mediaShare.setSharedWith(user);
-            mediaShare.setPermission(request.getPermission());
-
-            mediaShares.add(mediaShare);
+        // TODO: revisit: is this the best way to do this?
+        List<User> users = userRepository.findAllById(userIds);
+        if (users.size() != userIds.size()) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    ErrorCode.VALIDATION_ERROR,
+                    "One or more users do not exist"
+            );
         }
 
-        mediaShares = mediaShareRepository.saveAll(mediaShares);
+        Map<UUID, User> userMap = users.stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
 
-        return mediaShares.stream().map(this::toMediaShareDto).toList();
+        // fetch existing shares (if any)
+        List<MediaShare> existingShares =
+                mediaShareRepository.findByMediaIdAndSharedWithIdIn(mediaId, userIds);
+
+        Map<UUID, MediaShare> existingMap =
+                existingShares.stream()
+                        .collect(Collectors.toMap(
+                                s -> s.getSharedWith().getId(),
+                                Function.identity()
+                        ));
+
+        MediaFile mediaRef = entityManager.getReference(MediaFile.class, mediaId);
+
+        List<MediaShare> toSave = new ArrayList<>();
+
+        for (var req : shareRequests) {
+
+            MediaShare share = existingMap.get(req.getSharedWithUserId());
+
+            if (share == null) {
+                share = new MediaShare();
+                share.setMedia(mediaRef);
+                share.setSharedWith(userMap.get(req.getSharedWithUserId()));
+            }
+
+            // update or set permission
+            share.setPermission(req.getPermission());
+
+            toSave.add(share);
+        }
+
+        List<MediaShare> saved = mediaShareRepository.saveAll(toSave);
+
+        return saved.stream()
+                .map(this::toMediaShareDto)
+                .toList();
     }
 
     public MediaShareDto getShareByMediaAndUser(UUID mediaId, UUID sharedWithUserId) {
@@ -146,8 +187,15 @@ public class MediaShareService {
         dto.setId(entity.getId());
         dto.setCreatedAt(entity.getCreatedAt());
         dto.setUpdatedAt(entity.getUpdatedAt());
-        dto.setSharedWith(entity.getSharedWith());
         dto.setPermission(entity.getPermission());
+
+        UserDto userDto = new UserDto();
+        userDto.setActive(entity.getSharedWith().isActive());
+        userDto.setId(entity.getSharedWith().getId());
+        userDto.setDisplayName(entity.getSharedWith().getDisplayName());
+        userDto.setEmail(entity.getSharedWith().getEmail());
+
+        dto.setSharedWith(userDto);
 
         return dto;
     }

@@ -19,7 +19,7 @@ public class MediaShareController {
     @PostMapping
     public ApiResponse<List<MediaShareDto>> share(
             @PathVariable("id") UUID mediaId,
-            @ModelAttribute List<MediaShareRequest> requests
+            @RequestBody List<MediaShareRequest> requests
     ) {
         return ApiResponse.ok(mediaShareService.shareMediaWithUserList(mediaId, requests));
     }
