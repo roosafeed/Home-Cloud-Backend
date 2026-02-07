@@ -2,15 +2,20 @@ package com.roosafeed.home_cloud.auth.service;
 
 import com.roosafeed.home_cloud.auth.dto.InviteDto;
 import com.roosafeed.home_cloud.auth.dto.UserDto;
+import com.roosafeed.home_cloud.auth.dto.request.CreateUserRequest;
 import com.roosafeed.home_cloud.auth.dto.request.InviteUserRequest;
 import com.roosafeed.home_cloud.auth.entity.Invite;
 import com.roosafeed.home_cloud.auth.entity.User;
 import com.roosafeed.home_cloud.auth.repository.InviteRepository;
 import com.roosafeed.home_cloud.common.auth.context.CurrentUserProvider;
+import com.roosafeed.home_cloud.common.enums.ErrorCode;
+import com.roosafeed.home_cloud.common.enums.UserRole;
+import com.roosafeed.home_cloud.common.exception.ApiException;
 import com.roosafeed.home_cloud.config.AppProperties;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
@@ -23,6 +28,7 @@ import java.util.Base64;
 @RequiredArgsConstructor
 public class InviteService {
     private final InviteRepository inviteRepository;
+    private final UserService userService;
     private final CurrentUserProvider currentUserProvider;
     private final AppProperties appProperties;
     private final EntityManager entityManager;
@@ -52,6 +58,38 @@ public class InviteService {
         return toInviteDto(invite);
     }
 
+    public UserDto acceptInvite(String inviteToken, CreateUserRequest request) {
+        // validate request
+        Invite invite = inviteRepository.findByToken(inviteToken)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        ErrorCode.VALIDATION_ERROR,
+                        "Invalid invite token"
+                ));
+
+        Instant now = Instant.now();
+        boolean isExpiredAt = invite.getExpiresAt() != null && now.isAfter(invite.getExpiresAt());
+        boolean isUsed = invite.getUsedAt() != null && now.isAfter(invite.getUsedAt());
+
+        if (isExpiredAt || isUsed) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    ErrorCode.VALIDATION_ERROR,
+                    "The invite token has been expired"
+            );
+        }
+
+        if (userService.userExists(request.getEmail())) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    ErrorCode.VALIDATION_ERROR,
+                    "User with the email already exists"
+            );
+        }
+
+        return userService.saveUser(request, UserRole.USER);
+    }
+
     private String generate() {
         byte[] bytes = new byte[TOKEN_BYTES];
         RANDOM.nextBytes(bytes);
@@ -73,6 +111,7 @@ public class InviteService {
     private InviteDto toInviteDto(Invite entity) {
         InviteDto dto = new InviteDto();
         UserDto userDto = new UserDto();
+        userDto.setActive(entity.getInvitedBy().isActive());
         userDto.setDisplayName(entity.getInvitedBy().getDisplayName());
         userDto.setId(entity.getInvitedBy().getId());
         userDto.setEmail(entity.getInvitedBy().getEmail());
